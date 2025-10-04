@@ -1,9 +1,9 @@
 using System.Text;
 
-using Auth.Application.Contracts;                 // IAuthService
-using Auth.Infrastructure.Data;                  // AppDbContext
-using Auth.Infrastructure.Services;              // AuthService, JwtTokenService, IQrService, QrService, IQrCardGenerator, QrCardGenerator
-using Auth.Infrastructure.Services.Notifications; // EmailOptions, INotificationService, SmtpEmailNotificationService
+using Auth.Application.Contracts;                  // IAuthService
+using Auth.Infrastructure.Data;                   // AppDbContext
+using Auth.Infrastructure.Services;               // AuthService, JwtTokenService, IQrService, QrService, IQrCardGenerator, QrCardGenerator
+using Auth.Infrastructure.Services.Notifications; // EmailOptions, ResendOptions, INotificationService, SmtpEmailNotificationService, ResendEmailNotificationService
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -16,14 +16,14 @@ QuestPDF.Settings.License = LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// EF Core + MySQL
+// ===================== DB (EF Core + MySQL) =====================
 builder.Services.AddDbContext<AppDbContext>(opts =>
 {
     var cs = builder.Configuration.GetConnectionString("Default")!;
     opts.UseMySql(cs, ServerVersion.AutoDetect(cs));
 });
 
-// JWT
+// ===================== JWT =====================
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 var key = Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!);
 
@@ -50,9 +50,8 @@ builder.Services.AddAuthentication(o =>
 
 builder.Services.AddAuthorization();
 
-// ======= CORS (DEV) =======
-// Permite llamar desde file://, http://localhost:puerto, etc.
-// En prod cambia a .WithOrigins("https://tu-front.com")
+// ===================== CORS (DEV) =====================
+// En prod, cámbialo a .WithOrigins("https://tu-front.com") si quieres restringir.
 builder.Services.AddCors(opt =>
 {
     opt.AddPolicy("dev", p => p
@@ -62,21 +61,37 @@ builder.Services.AddCors(opt =>
     );
 });
 
-// ======= DI de servicios =======
+// ===================== DI de servicios =====================
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
-// Opciones y servicios extra (correo, facial, QR)
-builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection("Email"));
+// Opciones/servicios comunes
 builder.Services.Configure<FacialOptions>(builder.Configuration.GetSection("Facial"));
-builder.Services.AddScoped<INotificationService, SmtpEmailNotificationService>();
 builder.Services.AddScoped<IFacialAuthService, FacialAuthService>();
 builder.Services.AddScoped<IQrService, QrService>();
 builder.Services.AddScoped<IQrCardGenerator, QrCardGenerator>();
 
+// === Notificaciones (correo): Production → Resend | Development → SMTP ===
+if (builder.Environment.IsProduction())
+{
+    // Resend en producción (Railway)
+    builder.Services.Configure<ResendOptions>(builder.Configuration.GetSection("Resend"));
+    builder.Services.AddHttpClient<INotificationService, ResendEmailNotificationService>(c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(15);
+        // BaseAddress y Authorization se configuran dentro del servicio con ResendOptions.
+    });
+}
+else
+{
+    // SMTP en desarrollo/local
+    builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection("Email"));
+    builder.Services.AddScoped<INotificationService, SmtpEmailNotificationService>();
+}
+
 builder.Services.AddControllers();
 
-// Swagger
+// ===================== Swagger =====================
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
